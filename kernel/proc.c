@@ -16,6 +16,7 @@ int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
+//extern int proc_count(void);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
@@ -290,6 +291,9 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+
+  // Copy parent trace_mask to child
+  np->trace_mask = p->trace_mask;
 
   pid = np->pid;
 
@@ -692,4 +696,21 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+/**
+ * Helper function to count the number of processes.
+ * @return The number of processes that are not UNUSED.
+ */
+int proc_count(void) {
+    int counter = 0;
+    struct proc *p;
+    for(p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if(p->state != UNUSED) {
+            counter++;
+        }
+        release(&p->lock);
+    }
+    return counter;
 }

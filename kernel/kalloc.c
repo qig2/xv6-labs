@@ -10,6 +10,7 @@
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
+//extern uint64 free_memory_count(void);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -79,4 +80,26 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+/**
+ * Helper function to calculate the amount of free memory.
+ * @return The amount of free memory in Bytes.
+ */
+uint64 free_memory_count(void) {
+    uint64 free_page_counter = 0;
+    struct run *r;
+    acquire(&kmem.lock);
+    r = kmem.freelist;
+    release(&kmem.lock);
+    if (r == 0) {
+        return 0;
+    } else {
+        free_page_counter++;
+    }
+    while (r->next) {
+        free_page_counter++;
+        r = r->next;
+    }
+    return free_page_counter * PGSIZE;
 }
