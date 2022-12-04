@@ -30,16 +30,6 @@ procinit(void)
   initlock(&pid_lock, "nextpid");
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
-
-      // Allocate a page for the process's kernel stack.
-      // Map it high in memory, followed by an invalid
-      // guard page.
-      char *pa = kalloc();
-      if(pa == 0)
-        panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
-      kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
   }
   kvminithart();
 }
@@ -121,6 +111,22 @@ found:
     return 0;
   }
 
+    // Create the kernel page table per process
+    p->kernelPageTable = kvmPerProcessInit();
+    if(p->kernelPageTable == 0){
+        freeproc(p);
+        release(&p->lock);
+        return 0;
+    }
+
+    // Allocate the kernel stack per process
+    char *pa = kalloc();
+    if(pa == 0) panic("kalloc");
+    uint64 va = KSTACK((int) (p - proc));
+    kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W); // map the kernel stack to the kernel_pagetable
+    uvmmap(p->kernelPageTable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W); // map the kernel stack to the per process kernelPageTable
+    p->kstack = va;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -142,6 +148,14 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  // Free the kernel stack
+  kvmunmap(p->kstack, 1, 0);
+  uvmunmap(p->kernelPageTable, p->kstack, 1, 1);
+  p->kstack = 0;
+  // Free the per process page table
+  if (p->kernelPageTable)
+      proc_freekernelpagetable(p->kernelPageTable);
+  p->kernelPageTable = 0;
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -195,6 +209,14 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmfree(pagetable, sz);
 }
 
+// Free a process's kernel page table, and free the
+// physical memory it refers to.
+void
+proc_freekernelpagetable(pagetable_t pagetable)
+{
+    freePageTable(pagetable);
+}
+
 // a user program that calls exec("/init")
 // od -t xC initcode
 uchar initcode[] = {
@@ -220,6 +242,7 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  if (copy_pagetable(p->pagetable, p->kernelPageTable, 0, p->sz) != 0) panic("userinit: cannot copy_pagetable"); // update the change in the kernel page table
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -243,13 +266,16 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    if (sz + n >= PLIC) return -1;
+    if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0 || copy_pagetable(p->pagetable, p->kernelPageTable, p->sz, sz) != 0) { //
       return -1;
     }
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+    if (sz != p->sz) uvmunmap(p->kernelPageTable, PGROUNDUP(sz), (PGROUNDUP(p->sz) - PGROUNDUP(sz)) / PGSIZE, 0);
   }
   p->sz = sz;
+  processChangeSatp(p->kernelPageTable);
   return 0;
 }
 
@@ -268,10 +294,15 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 ){ // copy child's user page table to its kernel page table
     freeproc(np);
     release(&np->lock);
     return -1;
+  }
+  if (copy_pagetable(np->pagetable, np->kernelPageTable, 0, p->sz) != 0) {
+      freeproc(np);
+      release(&np->lock);
+      return -1;
   }
   np->sz = p->sz;
 
@@ -473,11 +504,13 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        processChangeSatp(p->kernelPageTable); // Change to current process's kernel page table
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+        kvminithart(); // change to kernel paging
 
         found = 1;
       }
