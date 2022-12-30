@@ -121,6 +121,13 @@ found:
     return 0;
   }
 
+  // Initialize sigalarm system call related fields
+  p->handler = 0;
+  p->whether_alarm = 0;
+  p->alarm_interval = 0;
+  p->tick_passed = 0;
+  p->in_handler = 0;
+
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));

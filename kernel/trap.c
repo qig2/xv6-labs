@@ -29,6 +29,17 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+// Store all the registers in the trapframe to struct proc
+void store_regs() {
+    struct proc *p = myproc();
+    p->epc = p->trapframe->epc;
+    p->a0 = p->trapframe->a0;
+    p->a1 = p->trapframe->a1;
+    p->s0 = p->trapframe->s0;
+    p->sp = p->trapframe->sp;
+    p->ra = p->trapframe->ra;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -66,7 +77,17 @@ usertrap(void)
 
     syscall();
   } else if((which_dev = devintr()) != 0){
-    // ok
+    // Handle alarm ticks
+    if (which_dev == 2 && p->whether_alarm) {
+        p->tick_passed++;
+        if (p->tick_passed >= p->alarm_interval && p->in_handler == 0) { // enter the handler only if the handler has returned
+            p->tick_passed = 0;
+            // call the handler
+            store_regs();
+            p->trapframe->epc = p->handler; // set sepc to the address of the handler so that it will jump to handler once return to user space
+            p->in_handler = 1; // set the flag
+        }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

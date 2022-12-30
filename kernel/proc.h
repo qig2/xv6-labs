@@ -103,4 +103,19 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // Added for lab trap
+  int whether_alarm;           // flag to check whether alarm is enabled
+  uint64 handler;              // handler for sysalarm
+  int alarm_interval;          // the alarm interval
+  int tick_passed;             // ticks have passed since the last call
+  int in_handler;              // determine whether we are in the middle of the handler
+
+  // Save the following registers
+  uint64 epc;           // saved user program counter
+  uint64 ra;
+  uint64 sp;
+  uint64 s0;
+  uint64 a0;
+  uint64 a1;
 };

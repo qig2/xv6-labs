@@ -121,6 +121,7 @@ panic(char *s)
   printf("panic: ");
   printf(s);
   printf("\n");
+  backtrace(); // add for lab trap: Backtrace
   panicked = 1; // freeze uart output from other CPUs
   for(;;)
     ;
@@ -131,4 +132,13 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
   pr.locking = 1;
+}
+
+// This function implement the backtrace as required in lab: trap
+void backtrace(void) {
+    uint64 cur_frame_ptr = r_fp();
+    while (cur_frame_ptr != PGROUNDUP(cur_frame_ptr)) { // use the page to determine when to stop the iteration
+        printf("%p\n", *(uint64*)(cur_frame_ptr - 8)); // read out the return address
+        cur_frame_ptr = *(uint64*)(cur_frame_ptr - 16); // read out the previous frame pointer
+    }
 }
