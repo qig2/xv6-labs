@@ -67,6 +67,26 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 15 || r_scause() == 13) {
+    // Handle lazy allocation
+    uint64 va = r_stval(); // virtual address that caused the page fault
+    if (va >= p->sz || va < p->trapframe->sp) {
+      // Handle fault on a virtual memory address higher than any allocated with sbrk()
+      // Handle faults on the invalid page below the user stack.
+      p->killed = 1;
+    } else {
+      va = PGROUNDDOWN(va);
+      char* mem = kalloc();
+      if(mem == 0){
+        p->killed = 1; // handle out-of-memory
+      } else {
+        memset(mem, 0, PGSIZE);
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0){
+          kfree(mem);
+          p->killed = 1;
+        }
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

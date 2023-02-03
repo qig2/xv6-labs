@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -101,10 +103,27 @@ walkaddr(pagetable_t pagetable, uint64 va)
     return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
+  if(pte == 0 || (*pte & PTE_V) == 0) {
+    // Called by sys_read(), sys_write() system calls, modify so that it can read/write to lazily allocated memory
+    struct proc *p = myproc();
+    if (va >= p->sz || va < p->trapframe->sp) {
+      // Handle fault on a virtual memory address higher than any allocated with sbrk()
+      // Handle faults on the invalid page below the user stack.
+      return 0;
+    } else {
+      va = PGROUNDDOWN(va);
+      char* mem = kalloc();
+      if(mem == 0){
+        return 0; // handle out-of-memory
+      } else {
+        memset(mem, 0, PGSIZE);
+        if(mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_U) != 0){
+          kfree(mem);
+          return 0;
+        }
+      }
+    }
+  }
   if((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
@@ -181,9 +200,9 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue; // same as uvmcopy()
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue; // same as uvmcopy()
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
     if(do_free){
@@ -315,9 +334,9 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
-      panic("uvmcopy: pte should exist");
+      continue; // handle lazy allocation in parent's page table
     if((*pte & PTE_V) == 0)
-      panic("uvmcopy: page not present");
+      continue; // handle lazy allocation in parent's page table
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)
